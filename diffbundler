@@ -1,0 +1,250 @@
+#!/usr/bin/env python
+
+import os, shutil, subprocess, sys, tarfile, tempfile
+
+REFSHEADS = os.path.join('refs', 'heads')
+REFSTAGS = os.path.join('refs', 'tags')
+
+def flatten_args(func):
+    def flatten(*args):
+        new_args = []
+        for arg in args:
+            if isinstance(arg, (tuple, list)):
+                new_args.extend(flatten(*arg))
+            else:
+                new_args.append(arg)
+        return new_args
+    def flattened_version(*args):
+        return func(*flatten(*args))
+    return flattened_version
+
+@flatten_args
+def git_popen(*args):
+    L = ['git']
+    L.extend(args)
+    ret = subprocess.Popen(L, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if ret.wait():
+        raise RuntimeError("an error occurred running 'git %s'"%' '.join(args))
+    return ret
+
+def git_stdout(*args):
+    p = git_popen(*args)
+    stdout, stderr = p.communicate()
+    ret = [ bt.decode('utf-8') for bt in stdout.splitlines() ]
+    if len(ret) == 1:
+        return ret[0]
+    else:
+        return ret
+
+def get_shas(refs_dir):
+    ret = set()
+    for f in ('HEAD', 'heads', 'tags'):
+        f = open(f, 'r')
+        for l in f:
+            ret.add(l.split(' ')[0])
+        f.close()
+    return ret
+
+class DiffBundle(object):
+
+    def __init__(self, path):
+        self.path = path
+        # the only time we are allowed to write
+        # is if we are creating a new DiffBundle
+        self.read_only = os.path.isfile(path)
+        if self.read_only:
+            self._tarf = tarfile.open(self.path, 'r')
+        else:
+            self._tarf = tarfile.open(self.path, 'w')
+
+    def extract(self, extract_dir):
+        os.chdir(extract_dir)
+        tmpd = tempfile.mkdtemp()
+        self._tarf.extract('bundle', tmpd)
+        git_popen('bundle', 'unbundle', os.path.join(tmpd, 'bundle'))
+        shutil.rmtree(tmpd)
+
+    def extract_refs(self, extract_dir):
+        os.chdir(extract_dir)
+        tmpd = tempfile.mkdtemp()
+        self._tarf.extract('refs', tmpd)
+        git_popen('checkout',
+                git_stdout('bundle', 'unbundle',
+                    os.path.join(tmpd, 'refs')).split(' ')[0])
+        shutil.rmtree(tmpd)
+
+class DiffBundler(object):
+
+    def __init__(self, bundle_dir):
+        self.bundle_dir = bundle_dir
+        self._bundles = {}
+
+    def __len__(self):
+        try:
+            return self._len
+        except AttributeError:
+            pass
+        self._len = 0
+        for f in os.listdir(self.bundle_dir):
+            try:
+                if f.endswith('.diffbundle'):
+                    self._len = max(self._len, int(f[:-11])+1)
+            except ValueError:
+                pass
+        return self._len
+
+    def __getitem__(self, i):
+        if not isinstance(i, int):
+            raise TypeError('list indices must be integers')
+        if i < 0:
+            i += len(self)
+        if i < 0 or i >= len(self):
+            raise IndexError('list index out of range')
+        try:
+            return self._bundles[i]
+        except KeyError:
+            pass
+        ret = self._bundles[i] = DiffBundle(
+                os.path.join(self.bundle_dir, str(i)+'.diffbundle'))
+        return ret
+
+    def __iter__(self):
+        for i in range(len(self)):
+            yield self[i]
+
+    def extract(self, extract_dir):
+        os.chdir(extract_dir)
+        git_popen('init')
+        for bundle in self:
+            bundle.extract(extract_dir)
+        tmpd = tempfile.mkdtemp()
+        try:
+            self._extract_refs(tmpd)
+            os.chdir(extract_dir)
+            f = open(os.path.join(tmpd, 'HEAD'), 'r')
+            HEAD = f.read()
+            f.close()
+            f = open(os.path.join(tmpd, 'tags'), 'r')
+            for ref in f:
+                ref = ref.strip('\n')
+                sha, name = ref.split(' ')
+                git_popen('tag', name, sha)
+            f.close()
+            f = open(os.path.join(tmpd, 'heads'), 'r')
+            for ref in f:
+                ref = ref.strip('\n')
+                sha, name = ref.split(' ')
+                git_popen('branch', name, sha)
+                if HEAD == sha:
+                    # try to checkout a branch if HEAD's sha matches
+                    git_popen('checkout', name)
+            f.close()
+        finally:
+            shutil.rmtree(tmpd)
+
+    def _extract_refs(self, extract_dir):
+        os.chdir(extract_dir)
+        git_popen('init')
+        for bundle in self:
+            bundle.extract_refs(extract_dir)
+
+    def create_diffbundle(self, repo_dir):
+        os.chdir(repo_dir)
+        args = []
+        tmpd = tempfile.mkdtemp()
+        if not len(self):
+            try:
+                HEADf = open(os.path.join(tmpd, 'HEAD'), 'w')
+                headsf = open(os.path.join(tmpd, 'heads'), 'w')
+                tagsf = open(os.path.join(tmpd, 'tags'), 'w')
+                for ref in git_stdout('show-ref', '--head'):
+                    sha, name = ref.split(' ')
+                    if name == 'HEAD':
+                        HEADf.write(sha)
+                    elif name.startswith(REFSHEADS):
+                        name = name[len(REFSHEADS)+1:]
+                        headsf.write(sha+' '+name+'\n')
+                    elif name.startswith(REFSTAGS):
+                        name = name[len(REFSTAGS)+1:]
+                        tagsf.write(sha+' '+name+'\n')
+                HEADf.close()
+                headsf.close()
+                tagsf.close()
+
+                git_popen('bundle', 'create', os.path.join(tmpd, 'bundle'), '--all')
+                os.chdir(tmpd)
+                git_popen('init')
+                git_popen('add', 'HEAD', 'heads', 'tags')
+                git_popen('commit', "--message='%s.diffbundle"%len(self))
+                git_popen('checkout', git_stdout('show-ref', '--hash'))
+                git_popen('branch', '--delete', 'master')
+                git_popen('bundle', 'create', 'refs', '--all')
+                new_bundle_path = os.path.join(
+                        self.bundle_dir, str(len(self))+'.diffbundle')
+                try:
+                    tarf = tarfile.open(new_bundle_path, 'w')
+                    tarf.add('bundle')
+                    tarf.add('refs')
+                    tarf.close()
+                except:
+                    os.remove(new_bundle_path)
+                    raise
+                self._len = len(self) + 1
+            finally:
+                shutil.rmtree(tmpd)
+            return
+        try:
+            self._extract_refs(tmpd)
+            old_shas = get_shas(tmpd)
+            os.chdir(repo_dir)
+            HEADf = open(os.path.join(tmpd, 'HEAD'), 'w')
+            headsf = open(os.path.join(tmpd, 'heads'), 'w')
+            tagsf = open(os.path.join(tmpd, 'tags'), 'w')
+            for ref in git_stdout('show-ref', '--head'):
+                sha, name = ref.split(' ')
+                if name == 'HEAD':
+                    HEADf.write(sha)
+                elif name.startswith(REFSHEADS):
+                    name = name[len(REFSHEADS)+1:]
+                    headsf.write(sha+' '+name+'\n')
+                elif name.startswith(REFSTAGS):
+                    name = name[len(REFSTAGS)+1:]
+                    tagsf.write(sha+' '+name+'\n')
+                m = -1
+                for old_sha in old_shas:
+                    tmb = git_stdout('merge-base', old_sha, sha)
+                    tm = len(git_stdout('rev-list', tmb+'..'+sha))
+                    if m < 0 or tm < m:
+                        merge_base = tmb
+                        if merge_base == sha:
+                            break
+                        m = tm
+                if merge_base != sha:
+                    args.append(merge_base+'..'+name)
+            HEADf.close()
+            headsf.close()
+            tagsf.close()
+            git_popen('bundle', 'create', os.path.join(tmpd, 'bundle'), args)
+            os.chdir(tmpd)
+            git_popen('commit', '--all', "--message='%s.diffbundle"%len(self))
+            git_popen('bundle', 'create', 'refs', 'HEAD^..HEAD')
+            new_bundle_path = os.path.join(
+                    self.bundle_dir, str(len(self))+'.diffbundle')
+            try:
+                tarf = tarfile.open(new_bundle_path, 'w')
+                tarf.add('bundle')
+                tarf.add('refs')
+                tarf.close()
+            except:
+                os.remove(new_bundle_path)
+                raise
+            self._len = len(self) + 1
+        finally:
+            shutil.rmtree(tmpd)
+
+if sys.argv[1] == 'new':
+    DB = DiffBundler(os.path.realpath(sys.argv[3]))
+    DB.create_diffbundle(os.path.realpath(sys.argv[2]))
+elif sys.argv[1] == 'extract':
+    DB = DiffBundler(os.path.realpath(sys.argv[2]))
+    DB.extract(os.path.realpath(sys.argv[3]))
