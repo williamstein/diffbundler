@@ -15,19 +15,28 @@ def flattened_iter(*args):
 
 _curdir = None
 
-def git_popen(directory, *args):
+def git_popen_unclean(directory, *args):
     global _curdir
     if _curdir != directory:
         os.chdir(directory)
         _curdir = directory
     ret = subprocess.Popen(flattened_iter('git', *args),
             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    return ret
+
+def git_popen(directory, *args):
+    args = tuple(args)
+    ret = git_popen_unclean(directory, *args)
     if ret.wait():
         _, stderr = ret.communicate()
         print(stderr)
-        git_cmd = flattened_iter('git', *args)
-        raise RuntimeError("an error occurred running '%s'"%' '.join(git_cmd))
+        raise RuntimeError("an error occurred running '%s'"%' '.join(
+                flattened_iter('git', *args)))
     return ret
+
+def git_retcode(*args):
+    p = git_popen_unclean(*args)
+    return p.wait()
 
 def git_stdout(*args):
     p = git_popen(*args)
@@ -201,23 +210,24 @@ class DiffBundler(object):
 
             bundle = bool(args)
 
-            if bundle:
-                git_popen(repo_dir, 'bundle', 'create',
-                        os.path.join(tmpd, 'bundle'), args)
-
-            refs = True
+            refs = bool(git_retcode(tmpd, 'diff', '--quiet'))
 
             if not (bundle or refs):
                 raise ValueError('there were no changes in the repository')
 
-            git_popen(tmpd, 'add', 'HEAD', 'heads', 'tags')
-            git_popen(tmpd, 'commit', "--message='%s.diffbundle"%len(self))
-            if not self:
-                git_popen(tmpd, 'checkout',
-                        git_stdout(tmpd, 'show-ref', '--hash'))
-                git_popen(tmpd, 'branch', '--delete', 'master')
-            arg = 'HEAD^..HEAD' if self else '--all'
-            git_popen(tmpd, 'bundle', 'create', 'refs', arg)
+            if bundle:
+                git_popen(repo_dir, 'bundle', 'create',
+                        os.path.join(tmpd, 'bundle'), args)
+
+            if refs:
+                git_popen(tmpd, 'add', 'HEAD', 'heads', 'tags')
+                git_popen(tmpd, 'commit', "--message='%s.diffbundle"%len(self))
+                if not self:
+                    git_popen(tmpd, 'checkout',
+                            git_stdout(tmpd, 'show-ref', '--hash'))
+                    git_popen(tmpd, 'branch', '--delete', 'master')
+                arg = 'HEAD^..HEAD' if self else '--all'
+                git_popen(tmpd, 'bundle', 'create', 'refs', arg)
             new_bundle_path = os.path.join(
                     self.bundle_dir, str(len(self))+'.diffbundle')
             try:
