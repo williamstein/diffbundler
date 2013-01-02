@@ -59,6 +59,17 @@ def get_shas(refs_dir):
         f.close()
     return ret
 
+class SelfCleaningTempDir(str):
+
+    def __new__(self):
+        return str.__new__(self, tempfile.mkdtemp())
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        shutil.rmtree(self)
+
 class DiffBundle(object):
 
     def __init__(self, path):
@@ -69,27 +80,21 @@ class DiffBundle(object):
             tari = self._tarf.getmember('bundle')
         except KeyError:
             return
-        tmpd = tempfile.mkdtemp()
-        try:
+        with SelfCleaningTempDir() as tmpd:
             self._tarf.extract(tari, tmpd)
             git_popen(extract_dir, 'bundle', 'unbundle',
                     os.path.join(tmpd, tari.name))
-        finally:
-            shutil.rmtree(tmpd)
 
     def extract_refs(self, extract_dir):
         try:
             tari = self._tarf.getmember('refs')
         except KeyError:
             return
-        tmpd = tempfile.mkdtemp()
-        try:
+        with SelfCleaningTempDir() as tmpd:
             self._tarf.extract(tari, tmpd)
             git_popen(extract_dir, 'checkout',
                     git_stdout(extract_dir, 'bundle', 'unbundle',
                         os.path.join(tmpd, tari.name)).split(' ')[0])
-        finally:
-            shutil.rmtree(tmpd)
 
 class DiffBundler(object):
 
@@ -138,8 +143,7 @@ class DiffBundler(object):
         git_popen(extract_dir, 'init')
         for bundle in self:
             bundle.extract(extract_dir)
-        tmpd = tempfile.mkdtemp()
-        try:
+        with SelfCleaningTempDir() as tmpd:
             self._extract_refs(tmpd)
             for fn, cmd in (('tags', 'tag'), ('heads', 'branch')):
                 f = open(os.path.join(tmpd, fn), 'r')
@@ -152,8 +156,6 @@ class DiffBundler(object):
             f = open(os.path.join(tmpd, 'HEAD'), 'r')
             git_popen(extract_dir, 'checkout', f.read())
             f.close()
-        finally:
-            shutil.rmtree(tmpd)
 
     def _extract_refs(self, extract_dir):
         git_popen(extract_dir, 'init')
@@ -161,8 +163,7 @@ class DiffBundler(object):
             bundle.extract_refs(extract_dir)
 
     def create_diffbundle(self, repo_dir):
-        tmpd = tempfile.mkdtemp()
-        try:
+        with SelfCleaningTempDir() as tmpd:
             self._extract_refs(tmpd)
 
             HEADf = open(os.path.join(tmpd, 'HEAD'), 'w')
@@ -248,8 +249,6 @@ class DiffBundler(object):
                     pass
                 raise
             self._len = len(self) + 1
-        finally:
-            shutil.rmtree(tmpd)
 
 if sys.argv[1] == 'new':
     DB = DiffBundler(os.path.realpath(sys.argv[3]))
