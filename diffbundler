@@ -216,7 +216,10 @@ class DiffBundler(object):
 
             bundle = bool(args)
 
-            refs = bool(git_retcode(tmpd, 'diff', '--quiet'))
+            if self:
+                refs = bool(git_retcode(tmpd, 'diff', '--quiet'))
+            else:
+                refs = True
 
             if not (bundle or refs):
                 raise ValueError('there were no changes in the repository')
