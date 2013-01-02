@@ -62,14 +62,7 @@ def get_shas(refs_dir):
 class DiffBundle(object):
 
     def __init__(self, path):
-        self.path = path
-        # the only time we are allowed to write
-        # is if we are creating a new DiffBundle
-        self.read_only = os.path.isfile(path)
-        if self.read_only:
-            self._tarf = tarfile.open(self.path, 'r')
-        else:
-            self._tarf = tarfile.open(self.path, 'w')
+        self._tarf = tarfile.open(path, 'r')
 
     def extract(self, extract_dir):
         try:
