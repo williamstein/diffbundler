@@ -147,21 +147,17 @@ class DiffBundler(object):
         tmpd = tempfile.mkdtemp()
         try:
             self._extract_refs(tmpd)
-            os.chdir(extract_dir)
-            f = open(os.path.join(tmpd, 'HEAD'), 'r')
-            HEAD = f.read()
-            git_popen(extract_dir, 'checkout', HEAD)
             for fn, cmd in (('tags', 'tag'), ('heads', 'branch')):
-                f.close()
                 f = open(os.path.join(tmpd, fn), 'r')
                 for ref in f:
                     ref = ref.strip('\n')
                     sha, name = ref.split(' ')
                     git_popen(extract_dir, cmd, name, sha)
-                    if HEAD == sha:
-                        # try to checkout a branch if HEAD's sha matches
-                        git_popen(extract_dir, 'checkout', name)
                 f.close()
+            # checkout the appropriate HEAD
+            f = open(os.path.join(tmpd, 'HEAD'), 'r')
+            git_popen(extract_dir, 'checkout', f.read())
+            f.close()
         finally:
             shutil.rmtree(tmpd)
 
@@ -174,21 +170,31 @@ class DiffBundler(object):
         tmpd = tempfile.mkdtemp()
         try:
             self._extract_refs(tmpd)
+
+            HEADf = open(os.path.join(tmpd, 'HEAD'), 'w')
+            HEAD = git_stdout(repo_dir, 'rev-parse', '--abbrev-ref', 'HEAD')
+            if HEAD == 'HEAD':
+                HEADf.write(git_stdout(repo_dir, 'rev-parse', 'HEAD'))
+            else:
+                HEADf.write(HEAD)
+            HEADf.close()
+
             old_shas = get_shas(tmpd)
             args = []
-            HEADf = open(os.path.join(tmpd, 'HEAD'), 'w')
+
             headsf = open(os.path.join(tmpd, 'heads'), 'w')
             tagsf = open(os.path.join(tmpd, 'tags'), 'w')
+
             for ref in git_stdout(repo_dir, 'show-ref', '--head'):
                 sha, name = ref.split(' ')
-                if name == 'HEAD':
-                    HEADf.write(sha)
-                elif name.startswith(REFSHEADS):
+
+                if name.startswith(REFSHEADS):
                     name = name[len(REFSHEADS)+1:]
                     headsf.write(sha+' '+name+'\n')
                 elif name.startswith(REFSTAGS):
                     name = name[len(REFSTAGS)+1:]
                     tagsf.write(sha+' '+name+'\n')
+
                 m = -1
                 for old_sha in old_shas:
                     tmb = git_stdout(repo_dir, 'merge-base', old_sha, sha)
@@ -201,7 +207,7 @@ class DiffBundler(object):
                             break
                 if m > 0:
                     args.append(merge_base+'..'+name)
-            HEADf.close()
+
             headsf.close()
             tagsf.close()
 
