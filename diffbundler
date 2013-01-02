@@ -241,6 +241,7 @@ class DiffBundler(object):
                     self.bundle_dir, str(len(self))+'.diffbundle')
             try:
                 tarf = tarfile.open(new_bundle_path, 'w')
+                os.chdir(tmpd)
                 if bundle:
                     tarf.add('bundle')
                 if refs:
