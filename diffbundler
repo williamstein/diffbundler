@@ -95,7 +95,6 @@ class DiffBundler(object):
 
     def __init__(self, bundle_dir):
         self.bundle_dir = bundle_dir
-        self._bundles = {}
 
     def __len__(self):
         try:
@@ -120,6 +119,8 @@ class DiffBundler(object):
             raise IndexError('list index out of range')
         try:
             return self._bundles[i]
+        except AttributeError:
+            self._bundles = {}
         except KeyError:
             pass
         ret = self._bundles[i] = DiffBundle(
