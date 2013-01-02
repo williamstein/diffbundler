@@ -176,8 +176,12 @@ class DiffBundler(object):
                 f.close()
             # checkout the appropriate HEAD
             f = open(os.path.join(tmpd, 'HEAD'), 'r')
-            git_popen(extract_dir, 'checkout', f.read())
+            sha, name = f.read().split(' ')
             f.close()
+            if name == 'HEAD':
+                git_popen(extract_dir, 'checkout', sha)
+            else:
+                git_popen(extract_dir, 'checkout', name)
 
     def _extract_refs(self, extract_dir):
         git_popen(extract_dir, 'init')
@@ -188,15 +192,14 @@ class DiffBundler(object):
         with SelfCleaningTempDir() as tmpd:
             self._extract_refs(tmpd)
 
+            old_shas = get_shas(tmpd)
+
             HEADf = open(os.path.join(tmpd, 'HEAD'), 'w')
-            HEAD = git_stdout(repo_dir, 'rev-parse', '--abbrev-ref', 'HEAD')
-            if HEAD == 'HEAD':
-                HEADf.write(git_stdout(repo_dir, 'rev-parse', 'HEAD'))
-            else:
-                HEADf.write(HEAD)
+            HEADf.write(git_stdout(repo_dir, 'rev-parse', 'HEAD'))
+            HEADf.write(' ')
+            HEADf.write(git_stdout(repo_dir, 'rev-parse', '--abbrev-ref', 'HEAD'))
             HEADf.close()
 
-            old_shas = get_shas(tmpd)
             args = []
 
             headsf = open(os.path.join(tmpd, 'heads'), 'w')
