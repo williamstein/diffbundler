@@ -13,6 +13,16 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+Usage:
+
+# creates a new bundle that includes the commits missing from
+# bundle-dir (NOTE: bundle-dir must not exist!):
+$ diffbundler create repo-dir bundle-dir
+
+# This extracts the bundles into a repository in out-dir:
+$ diffbundler extract bundle-dir extract-dir
+
 '''
 
 import os, shutil, subprocess, tarfile, tempfile
