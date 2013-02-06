@@ -10,3 +10,10 @@ You may obtain a copy of the License at
     http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
+
+# usage:
+#  $ diffbundler new repo bundle-dir  # creates a new bundle that includes the commits missing from b
+undle-dir (NOTE: bundle-dir must not exist!)
+#  $ diffbundler update repo bundle-dir # equivalent to new
+#  $ diffbundler extract bundle-dir out-dir   # extracts the bundles into a repository in out-dir
+#
